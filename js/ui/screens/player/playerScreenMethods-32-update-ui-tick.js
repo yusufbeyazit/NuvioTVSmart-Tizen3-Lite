@@ -33,7 +33,10 @@ export function createPlayerScreenMethods32() {
     requestUiTick() {
       const now = uiTickNow();
       const elapsed = now - Number(this.lastUiTickAt || 0);
-      if (!this.lastUiTickAt || elapsed >= UI_TICK_MIN_INTERVAL_MS) {
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
+      const osdVisible = Boolean(this.controlsVisible || this.pauseOverlayVisible || this.seekOverlayVisible);
+      const minInterval = isLite ? (osdVisible ? 350 : 1000) : UI_TICK_MIN_INTERVAL_MS;
+      if (!this.lastUiTickAt || elapsed >= minInterval) {
         this.updateUiTick();
         return;
       }
@@ -46,7 +49,7 @@ export function createPlayerScreenMethods32() {
           this.uiTickPendingTimer = null;
           this.updateUiTick();
         },
-        Math.max(0, UI_TICK_MIN_INTERVAL_MS - elapsed)
+        Math.max(0, minInterval - elapsed)
       );
     },
     cancelPendingUiTick() {
@@ -76,18 +79,28 @@ export function createPlayerScreenMethods32() {
         this.chapterSkipIntervalsRetryAt = Date.now() + 5000;
         void this.refreshChapterSkipIntervals?.();
       }
-      syncPlayerPlaybackBadges(this, PlayerController, renderPlayerImageBadgeChip, getTrackLanguageLabel);
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
+      const osdVisible = Boolean(
+        this.controlsVisible || this.pauseOverlayVisible || this.seekOverlayVisible || this.loadingVisible
+      );
+      if (!isLite || osdVisible) {
+        syncPlayerPlaybackBadges(this, PlayerController, renderPlayerImageBadgeChip, getTrackLanguageLabel);
+      }
       const isLivePlayback = this.isLivePlayback();
       const watchedMs = this.liveWatchClock.update(
         isLivePlayback,
         PlayerController.isPlaying && !this.paused && !this.isBufferingForPauseOverlay()
       );
-      this.uiRefs?.progressShell?.classList.toggle("hidden", isLivePlayback);
+      if (this.uiRefs?.progressShell) {
+        this.uiRefs.progressShell.classList.remove("hidden");
+        this.uiRefs.progressShell.classList.toggle("is-live", isLivePlayback);
+      }
       if (isLivePlayback && this.seekPreviewSeconds != null) this.cancelSeekPreview();
-      if (isLivePlayback && this.controlFocusZone === "progress") this.focusFirstControl();
       this.ensureNextEpisodeStreamsPrefetch();
       this.shouldShowNextEpisodeCard();
-      void this.refreshLoadingOverlayProgress();
+      if (!isLite) {
+        void this.refreshLoadingOverlayProgress();
+      }
       const current = this.getPlaybackCurrentSeconds();
       this.updateActiveSkipInterval(current);
       this.updateSkipIntroCountdown(Date.now());
@@ -96,30 +109,54 @@ export function createPlayerScreenMethods32() {
       this.evaluatePostPlayRecommendation();
       const uiRefs = this.uiRefs || {};
       const uiState = this.lastUiTickState || (this.lastUiTickState = {});
-      const progressBuffered = uiRefs.progressBuffered;
-      if (progressBuffered) {
-        const bufferedSeconds = this.getPlaybackBufferedSeconds();
-        const bufferedVisible = Number.isFinite(bufferedSeconds) && duration > 0 && bufferedSeconds > current + 0.25;
-        const bufferedProgress = bufferedVisible ? clamp(bufferedSeconds / duration, 0, 1) : 0;
-        const nextBufferedWidth = `${Math.round(bufferedProgress * 10000) / 100}%`;
-        if (uiState.bufferedWidth !== nextBufferedWidth) {
-          progressBuffered.style.width = nextBufferedWidth;
-          uiState.bufferedWidth = nextBufferedWidth;
+      if (!isLite || osdVisible) {
+        const progressBuffered = uiRefs.progressBuffered;
+        if (progressBuffered) {
+          const bufferedSeconds = this.getPlaybackBufferedSeconds();
+          let bufferedVisible = Number.isFinite(bufferedSeconds) && duration > 0 && bufferedSeconds > current + 0.25;
+          let bufferedProgress = bufferedVisible ? clamp(bufferedSeconds / duration, 0, 1) : 0;
+          if (isLivePlayback) {
+            const liveMetrics =
+              typeof PlayerController.getLiveBufferMetrics === "function"
+                ? PlayerController.getLiveBufferMetrics()
+                : null;
+            if (liveMetrics?.isBuffering && liveMetrics.bufferingPercent != null) {
+              bufferedVisible = true;
+              bufferedProgress = clamp(liveMetrics.bufferingPercent / 100, 0, 1);
+            } else if (liveMetrics?.bufferedAheadSeconds != null) {
+              bufferedVisible = true;
+              // Visualize real buffered headroom (0s..15s fills the buffer track).
+              bufferedProgress = clamp(liveMetrics.bufferedAheadSeconds / 15, 0.08, 1);
+            } else if (liveMetrics?.bufferingPercent != null) {
+              bufferedVisible = true;
+              bufferedProgress = clamp(liveMetrics.bufferingPercent / 100, 0, 1);
+            } else {
+              bufferedVisible = false;
+              bufferedProgress = 0;
+            }
+          }
+          const nextBufferedWidth = `${Math.round(bufferedProgress * 10000) / 100}%`;
+          if (uiState.bufferedWidth !== nextBufferedWidth) {
+            progressBuffered.style.width = nextBufferedWidth;
+            uiState.bufferedWidth = nextBufferedWidth;
+          }
+          if (uiState.bufferedVisible !== bufferedVisible) {
+            progressBuffered.classList.toggle("is-visible", bufferedVisible);
+            uiState.bufferedVisible = bufferedVisible;
+          }
         }
-        if (uiState.bufferedVisible !== bufferedVisible) {
-          progressBuffered.classList.toggle("is-visible", bufferedVisible);
-          uiState.bufferedVisible = bufferedVisible;
-        }
+        this.renderProgressPosition();
       }
-      this.renderProgressPosition();
       this.syncSkipIntroButtonProgress();
       this.renderSkipIntroButton();
-      this.syncPlayerOverlayLayoutState();
+      if (!isLite || osdVisible) {
+        this.syncPlayerOverlayLayoutState();
+      }
       this.renderBitmapSubtitleAtCurrentTime();
       this.maybeAutoplayNextEpisode();
 
       const clock = uiRefs.clock;
-      if (clock) {
+      if (clock && (!isLite || osdVisible)) {
         const now = new Date();
         const nextClockMinuteKey = `${now.getHours()}:${now.getMinutes()}`;
         if (uiState.clockMinuteKey !== nextClockMinuteKey) {
@@ -163,7 +200,20 @@ export function createPlayerScreenMethods32() {
 
       const timeLabel = uiRefs.timeLabel;
       if (timeLabel && isLivePlayback) {
-        const nextTimeLabel = t("player_live_watched", [formatTime(watchedMs / 1000)], "LIVE  %1$s");
+        const liveMetrics =
+          typeof PlayerController.getLiveBufferMetrics === "function"
+            ? PlayerController.getLiveBufferMetrics()
+            : null;
+        const baseLiveLabel = t("player_live_watched", [formatTime(watchedMs / 1000)], "LIVE  %1$s");
+        let bufferSuffix = "";
+        if (liveMetrics?.isBuffering && liveMetrics.bufferingPercent != null) {
+          bufferSuffix = `  ·  Buffer %${liveMetrics.bufferingPercent}`;
+        } else if (liveMetrics?.bufferedAheadSeconds != null) {
+          bufferSuffix = `  ·  Buffer ${Math.round(liveMetrics.bufferedAheadSeconds)}s`;
+        } else if (liveMetrics?.bufferingPercent != null) {
+          bufferSuffix = `  ·  Buffer %${liveMetrics.bufferingPercent}`;
+        }
+        const nextTimeLabel = `${baseLiveLabel}${bufferSuffix}`;
         if (uiState.timeLabelText !== nextTimeLabel) {
           timeLabel.textContent = nextTimeLabel;
           uiState.timeLabelText = nextTimeLabel;
@@ -183,11 +233,46 @@ export function createPlayerScreenMethods32() {
       // (pendingPreviewSeekPosition ?: position) and redraws it on every step.
       // The UI tick runs once a second, so a held seek must redraw here too or
       // the bar and time trail the preview.
-      if (this.isLivePlayback()) {
-        return;
-      }
       const uiRefs = this.uiRefs || {};
       const uiState = this.lastUiTickState || (this.lastUiTickState = {});
+      if (this.isLivePlayback()) {
+        const progressFill = uiRefs.progressFill;
+        const progressShell = uiRefs.progressShell;
+        const liveMetrics =
+          typeof PlayerController.getLiveBufferMetrics === "function"
+            ? PlayerController.getLiveBufferMetrics()
+            : null;
+        const isBuffering = Boolean(
+          liveMetrics?.isBuffering ||
+            this.loadingVisible ||
+            !this.hasPresentedPlaybackFrame ||
+            this.isBufferingForPauseOverlay?.()
+        );
+        const liveDuration = this.getPlaybackDisplayDurationSeconds();
+        const livePos = this.getPlaybackDisplayCurrentSeconds();
+        let nextWidth = "0%";
+        if (isBuffering && liveMetrics?.bufferingPercent != null) {
+          nextWidth = `${Math.max(0, Math.min(100, liveMetrics.bufferingPercent))}%`;
+        } else if (liveMetrics?.positionRatio != null) {
+          nextWidth = `${Math.round(clamp(liveMetrics.positionRatio, 0, 1) * 10000) / 100}%`;
+        } else if (liveDuration > 0 && livePos >= 0) {
+          nextWidth = `${Math.round(clamp(livePos / liveDuration, 0, 1) * 10000) / 100}%`;
+        } else if (liveMetrics?.bufferedAheadSeconds != null) {
+          nextWidth = `${Math.round(clamp(liveMetrics.bufferedAheadSeconds / 15, 0.05, 1) * 100)}%`;
+        } else if (liveMetrics?.bufferingPercent != null) {
+          nextWidth = `${Math.max(0, Math.min(100, liveMetrics.bufferingPercent))}%`;
+        } else if (this.hasPresentedPlaybackFrame) {
+          nextWidth = "100%";
+        }
+        if (progressShell) {
+          progressShell.classList.toggle("is-live-loading", isBuffering);
+        }
+        if (progressFill && uiState.progressWidth !== nextWidth) {
+          progressFill.style.width = nextWidth;
+          uiState.progressWidth = nextWidth;
+        }
+        return;
+      }
       const duration = this.getPlaybackDisplayDurationSeconds();
       const position = this.seekPreviewSeconds != null ? Number(this.seekPreviewSeconds) : this.getPlaybackDisplayCurrentSeconds();
       const progress = duration > 0 ? clamp(position / duration, 0, 1) : 0;
@@ -250,7 +335,28 @@ export function createPlayerScreenMethods32() {
         uiState.seekWidth = nextSeekWidth;
       }
     },
+    seekLiveForward(stepSeconds = 5) {
+      if (!this.isLivePlayback()) {
+        return false;
+      }
+      const didSeek =
+        typeof PlayerController.seekLiveForward === "function"
+          ? Boolean(PlayerController.seekLiveForward(stepSeconds))
+          : false;
+      if (didSeek) {
+        this.setControlsVisible(true, { focus: false });
+        this.resetControlsAutoHide();
+        this.updateUiTick();
+      }
+      return didSeek;
+    },
     beginSeekPreview(direction, isRepeat = false, commitOnRelease = false) {
+      if (this.isLivePlayback()) {
+        if (direction > 0) {
+          this.seekLiveForward(5);
+        }
+        return;
+      }
       if (!this.isSeekBarAvailable()) {
         return;
       }

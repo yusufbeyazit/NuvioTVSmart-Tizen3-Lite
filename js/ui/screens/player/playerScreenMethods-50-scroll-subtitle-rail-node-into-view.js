@@ -31,9 +31,10 @@ export function createPlayerScreenMethods50() {
         return;
       }
       let nextScrollTop = viewTop;
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
 
-      const railRect = typeof rail.getBoundingClientRect === "function" ? rail.getBoundingClientRect() : null;
-      const nodeRect = typeof node.getBoundingClientRect === "function" ? node.getBoundingClientRect() : null;
+      const railRect = !isLite && typeof rail.getBoundingClientRect === "function" ? rail.getBoundingClientRect() : null;
+      const nodeRect = !isLite && typeof node.getBoundingClientRect === "function" ? node.getBoundingClientRect() : null;
       if (railRect && nodeRect && Number.isFinite(railRect.top) && Number.isFinite(nodeRect.top)) {
         if (center) {
           nextScrollTop = viewTop + (nodeRect.top - railRect.top) - Math.max(0, (rail.clientHeight - node.offsetHeight) / 2);
@@ -115,13 +116,25 @@ export function createPlayerScreenMethods50() {
         return optionsByLanguage.get(normalizedLanguageKey);
       }
       const sourceRank = { internal: 0, addon: 1, off: 2 };
-      const locale = typeof I18n.getLocale === "function" ? I18n.getLocale() : undefined;
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
+      const locale = !isLite && typeof I18n.getLocale === "function" ? I18n.getLocale() : undefined;
+      const fastCompare = (a, b) => {
+        const leftStr = String(a || "").toLowerCase();
+        const rightStr = String(b || "").toLowerCase();
+        if (leftStr < rightStr) return -1;
+        if (leftStr > rightStr) return 1;
+        return 0;
+      };
       const filteredOptions = this.collectSubtitleOptionItems()
         .filter((entry) => entry.languageKey === normalizedLanguageKey && entry.languageKey !== SUBTITLE_LANGUAGE_OFF_KEY)
         .sort((left, right) => {
           const sourceDelta = (sourceRank[left.sourceType] ?? 99) - (sourceRank[right.sourceType] ?? 99);
           if (sourceDelta !== 0) {
             return sourceDelta;
+          }
+          if (isLite) {
+            const secDelta = fastCompare(left.secondary, right.secondary);
+            return secDelta !== 0 ? secDelta : fastCompare(left.title, right.title);
           }
           const secondaryDelta = String(left.secondary || "").localeCompare(String(right.secondary || ""), locale, { sensitivity: "base" });
           if (secondaryDelta !== 0) {

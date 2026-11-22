@@ -10,20 +10,19 @@ export function createPlayerControllerMethods03() {
     startAvPlayTickTimer() {
       this.stopAvPlayTickTimer();
       let trackPollTicks = 0;
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
       this.avplayTickTimer = setInterval(() => {
         if (!this.isUsingAvPlay()) {
           return;
         }
         this.refreshAvPlayTimeline();
         trackPollTicks += 1;
-        if ((trackPollTicks <= 15 || trackPollTicks % 5 === 0) && ["PLAYING", "PAUSED"].includes(this.getAvPlayState())) {
+        const shouldPollTracks = isLite
+          ? trackPollTicks <= 3 || trackPollTicks % 15 === 0
+          : trackPollTicks <= 15 || trackPollTicks % 5 === 0;
+        if (shouldPollTracks && ["PLAYING", "PAUSED"].includes(this.getAvPlayState())) {
           const fingerprint = () =>
-            JSON.stringify([
-              this.avplayAudioTracks,
-              this.avplaySubtitleTracks,
-              this.selectedAvPlayAudioTrackIndex,
-              this.selectedAvPlaySubtitleTrackIndex
-            ]);
+            `${this.avplayTotalTracksSignature || ""}|${this.selectedAvPlayAudioTrackIndex}|${this.selectedAvPlaySubtitleTrackIndex}`;
           const previous = fingerprint();
           this.syncAvPlayTrackInfo({ force: true });
           if (previous !== fingerprint()) {
@@ -379,7 +378,12 @@ export function createPlayerControllerMethods03() {
       ).trim();
     },
     pickAvPlayTrackLanguage(track = {}) {
-      const extraInfo = this.parseAvPlayExtraInfo(track.extra_info || track.extraInfo || null) || {};
+      const rawExtra = track.extra_info || track.extraInfo || null;
+      const extraInfo = this.parseAvPlayExtraInfo(rawExtra) || {};
+      const bareExtraLang =
+        typeof rawExtra === "string" && /^[a-z]{2,3}(?:-[a-z]{2,4})?$/i.test(rawExtra.trim())
+          ? rawExtra.trim()
+          : "";
       const candidates = [
         track.language,
         track.lang,
@@ -388,9 +392,15 @@ export function createPlayerControllerMethods03() {
         track.language_code,
         extraInfo.track_lang,
         extraInfo.trackLang,
+        extraInfo.subtitle_lang,
+        extraInfo.subtitleLang,
         extraInfo.language,
         extraInfo.language_code,
-        extraInfo.lang
+        extraInfo.languageCode,
+        extraInfo.lang_code,
+        extraInfo.iso_639_2,
+        extraInfo.lang,
+        bareExtraLang
       ].map((value) => String(value || "").trim());
       return candidates.find((value) => value && !/^(unknown(?: language)?|undetermined|undefined|und|unk|zxx)$/i.test(value)) || "";
     },

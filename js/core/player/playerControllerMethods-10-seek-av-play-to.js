@@ -284,6 +284,93 @@ export function createPlayerControllerMethods10() {
       }
       return didSeek;
     },
+    seekLiveForward(stepSeconds = 5) {
+      const step = Math.max(1, Number(stepSeconds) || 5);
+      const stepMs = Math.floor(step * 1000);
+
+      if (!this.isUsingAvPlay()) {
+        const video = this.video;
+        if (!video) {
+          return false;
+        }
+        try {
+          const current = Number(video.currentTime || 0);
+          let maxTarget = current + step;
+          const ranges = video.buffered;
+          if (ranges && ranges.length > 0) {
+            const liveEnd = Number(ranges.end(ranges.length - 1));
+            if (Number.isFinite(liveEnd) && liveEnd > current) {
+              maxTarget = Math.min(Math.max(current, liveEnd - 0.5), current + step);
+            }
+          }
+          if (Number.isFinite(maxTarget) && maxTarget > current + 0.1) {
+            video.currentTime = maxTarget;
+            this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
+            return true;
+          }
+        } catch (_) {
+          return false;
+        }
+        return false;
+      }
+
+      if (this.avplaySeekInFlight) {
+        return false;
+      }
+      const avplay = this.getAvPlay();
+      if (!avplay) {
+        return false;
+      }
+
+      let currentMs = Number(this.avplayCurrentTimeMs || 0);
+      try {
+        const nativeMs = Number(avplay.getCurrentTime?.());
+        if (Number.isFinite(nativeMs) && nativeMs >= 0) {
+          currentMs = nativeMs;
+          this.avplayCurrentTimeMs = nativeMs;
+        }
+      } catch (_) {}
+
+      let targetMs = currentMs + stepMs;
+      try {
+        const rawLive = String(avplay.getStreamingProperty?.("GET_LIVE_DURATION") || "");
+        const parts = rawLive.split("|");
+        if (parts.length === 2) {
+          const endMs = Number(parts[1]);
+          if (Number.isFinite(endMs) && endMs > currentMs) {
+            const safeEdgeMs = Math.max(currentMs, endMs - 800);
+            targetMs = Math.min(safeEdgeMs, currentMs + stepMs);
+            if (targetMs <= currentMs + 150) {
+              return false;
+            }
+          }
+        }
+      } catch (_) {}
+
+      const deltaMs = Math.max(500, Math.floor(targetMs - currentMs));
+      try {
+        if (typeof avplay.jumpForward === "function") {
+          avplay.jumpForward(
+            deltaMs,
+            () => {
+              this.refreshAvPlayTimeline();
+              this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
+            },
+            () => {
+              // Fallback to seekTo when jumpForward is rejected by the stream.
+              this.seekAvPlayTo(targetMs);
+            }
+          );
+          this.avplayCurrentTimeMs = targetMs;
+          this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
+          return true;
+        }
+      } catch (_) {
+        // Fall through to seekAvPlayTo below.
+      }
+
+      return this.seekAvPlayTo(targetMs);
+    },
     isPlaybackEnded() {
       if (this.isLivePlaybackItemType()) {
         return false;

@@ -428,6 +428,237 @@ function flexGapFallbackPlugin() {
 
 flexGapFallbackPlugin.postcss = true;
 
+function buildRootVariableMap(allCssTexts) {
+  const rawMap = new Map();
+  const combinedText = Array.isArray(allCssTexts) ? allCssTexts.join("\n") : String(allCssTexts || "");
+  const blockRegex = /(?::root|html[^{]*|body[^{]*|\.modern-sidebar-shell[^{]*|\.home-[^{]*)\{([\s\S]*?)\}/g;
+  let blockMatch;
+  while ((blockMatch = blockRegex.exec(combinedText)) !== null) {
+    const body = blockMatch[1];
+    const declRegex = /(--[\w-]+)\s*:\s*([^;{}]+);/g;
+    let match;
+    while ((match = declRegex.exec(body)) !== null) {
+      const name = match[1].trim();
+      const rawValue = match[2].trim();
+      const normalized = toLegacyColorValue(toLegacyLengthValue(rawValue));
+      if (!rawMap.has(name) || !/\b(min|max|clamp)\(/.test(normalized)) {
+        rawMap.set(name, normalized);
+      }
+    }
+  }
+  // Fallback sweep for any remaining custom property definitions in any rule
+  const anyDeclRegex = /(--[\w-]+)\s*:\s*([^;{}]+);/g;
+  let anyMatch;
+  while ((anyMatch = anyDeclRegex.exec(combinedText)) !== null) {
+    const name = anyMatch[1].trim();
+    if (!rawMap.has(name)) {
+      const rawValue = anyMatch[2].trim();
+      rawMap.set(name, toLegacyColorValue(toLegacyLengthValue(rawValue)));
+    }
+  }
+  // Resolve nested var(--...) inside definitions
+  const resolvedMap = new Map();
+  if (!rawMap.has("--primary-color")) {
+    rawMap.set("--primary-color", "#f5f5f5");
+  }
+  for (const [name, value] of rawMap.entries()) {
+    resolvedMap.set(name, resolveCssVariables(value, rawMap, new Set([name])));
+  }
+  return resolvedMap;
+}
+
+function resolveCssVariables(value, varMap, visited = new Set()) {
+  let result = String(value || "");
+  if (!result.includes("var(")) {
+    return result;
+  }
+  let iterations = 0;
+  while (result.includes("var(") && iterations < 6) {
+    iterations += 1;
+    let changed = false;
+    let out = "";
+    let index = 0;
+    while (index < result.length) {
+      const start = result.indexOf("var(", index);
+      if (start === -1) {
+        out += result.slice(index);
+        break;
+      }
+      out += result.slice(index, start);
+      let depth = 1;
+      let cursor = start + 4;
+      while (cursor < result.length && depth > 0) {
+        if (result[cursor] === "(") depth += 1;
+        else if (result[cursor] === ")") depth -= 1;
+        cursor += 1;
+      }
+      if (depth !== 0) {
+        out += result.slice(start);
+        break;
+      }
+      const inner = result.slice(start + 4, cursor - 1);
+      const commaIdx = inner.indexOf(",");
+      const varName = (commaIdx === -1 ? inner : inner.slice(0, commaIdx)).trim();
+      const fallback = commaIdx === -1 ? undefined : inner.slice(commaIdx + 1).trim();
+      if (/^--[\w-]+$/.test(varName) && !visited.has(varName)) {
+        if (varMap.has(varName)) {
+          const nextVisited = new Set(visited);
+          nextVisited.add(varName);
+          changed = true;
+          out += resolveCssVariables(varMap.get(varName), varMap, nextVisited);
+          index = cursor;
+          continue;
+        }
+        if (fallback !== undefined) {
+          changed = true;
+          out += resolveCssVariables(fallback, varMap, visited);
+          index = cursor;
+          continue;
+        }
+      }
+      out += result.slice(start, cursor);
+      index = cursor;
+    }
+    result = out;
+    if (!changed) break;
+  }
+  return result;
+}
+
+function legacyCssVariablesPlugin(varMap) {
+  return {
+    postcssPlugin: "nuvio-legacy-css-variables",
+    Declaration(decl) {
+      if (decl.prop.startsWith("--") || !decl.value.includes("var(")) {
+        return;
+      }
+      if (decl.parent?.type === "atrule" || decl.parent?.parent?.name === "supports") {
+        return;
+      }
+      const resolved = toLegacyColorValue(toLegacyLengthValue(resolveCssVariables(decl.value, varMap)));
+      if (!resolved || resolved === decl.value || resolved.includes("var(")) {
+        return;
+      }
+      const previous = decl.prev();
+      if (
+        !previous ||
+        previous.type !== "decl" ||
+        previous.prop !== decl.prop ||
+        previous.value !== resolved
+      ) {
+        decl.cloneBefore({ value: resolved });
+      }
+    }
+  };
+}
+
+legacyCssVariablesPlugin.postcss = true;
+
+function legacyGridFallbackPlugin(varMap = new Map()) {
+  return {
+    postcssPlugin: "nuvio-legacy-grid-fallback",
+    Rule(rule) {
+      if (
+        !rule.selector ||
+        (rule.parent?.type === "atrule" && /keyframes$/i.test(rule.parent.name))
+      ) {
+        return;
+      }
+      let isGrid = false;
+      let isInlineGrid = false;
+      let templateColumns = "";
+      let gapValue = "";
+      let rowGapValue = "";
+      let columnGapValue = "";
+
+      rule.walkDecls((decl) => {
+        const prop = decl.prop.toLowerCase();
+        const resolvedVal = resolveCssVariables(decl.value, varMap);
+        if (prop === "display") {
+          if (/\binline-grid\b/.test(resolvedVal)) {
+            isGrid = true;
+            isInlineGrid = true;
+          } else if (/\bgrid\b/.test(resolvedVal)) {
+            isGrid = true;
+          }
+        } else if (prop === "grid-template-columns") {
+          templateColumns = resolvedVal.trim();
+        } else if (prop === "gap") {
+          gapValue = toLegacyLengthValue(resolvedVal);
+        } else if (prop === "row-gap") {
+          rowGapValue = toLegacyLengthValue(resolvedVal);
+        } else if (prop === "column-gap") {
+          columnGapValue = toLegacyLengthValue(resolvedVal);
+        }
+      });
+
+      if (!isGrid) return;
+
+      const scopedSelectors = rule.selectors.map((selector) =>
+        /^html(?=[.#[:\s]|$)/i.test(selector)
+          ? selector.replace(/^html\b/i, "html.no-css-grid")
+          : `html.no-css-grid ${selector}`
+      );
+
+      const gridFallbackRule = postcss.rule({ selectors: scopedSelectors });
+      gridFallbackRule.append({
+        prop: "display",
+        value: isInlineGrid ? "inline-flex" : "flex"
+      });
+      gridFallbackRule.append({ prop: "flex-wrap", value: "wrap" });
+
+      const nodesToInsert = [gridFallbackRule];
+      const repeatMatch = templateColumns.match(/^repeat\(\s*(\d+)\s*,/i);
+      const colGap = columnGapValue || (gapValue ? splitTopLevelSpaces(gapValue)[1] || splitTopLevelSpaces(gapValue)[0] : "0px");
+      const rowGap = rowGapValue || (gapValue ? splitTopLevelSpaces(gapValue)[0] : "0px");
+
+      if (repeatMatch) {
+        const cols = Number(repeatMatch[1]);
+        if (cols > 1 && cols <= 12) {
+          const itemRule = postcss.rule({
+            selectors: scopedSelectors.map((s) => `${s} > *`)
+          });
+          const pct = (100 / cols).toFixed(2);
+          itemRule.append({ prop: "box-sizing", value: "border-box" });
+          itemRule.append({
+            prop: "width",
+            value: colGap && colGap !== "0" && colGap !== "0px" ? `calc(${pct}% - ${colGap})` : `${pct}%`
+          });
+          if (colGap && colGap !== "0" && colGap !== "0px") {
+            itemRule.append({ prop: "margin-right", value: colGap });
+          }
+          if (rowGap && rowGap !== "0" && rowGap !== "0px") {
+            itemRule.append({ prop: "margin-bottom", value: rowGap });
+          }
+          nodesToInsert.push(itemRule);
+        }
+      } else if (/auto-fi(?:ll|t)/i.test(templateColumns)) {
+        const minMatch = templateColumns.match(/minmax\(\s*([^,]+)\s*,/i);
+        const itemRule = postcss.rule({
+          selectors: scopedSelectors.map((s) => `${s} > *`)
+        });
+        itemRule.append({ prop: "box-sizing", value: "border-box" });
+        itemRule.append({ prop: "flex", value: `1 0 ${minMatch ? minMatch[1].trim() : "240px"}` });
+        if (colGap && colGap !== "0" && colGap !== "0px") {
+          itemRule.append({ prop: "margin-right", value: colGap });
+        }
+        if (rowGap && rowGap !== "0" && rowGap !== "0px") {
+          itemRule.append({ prop: "margin-bottom", value: rowGap });
+        }
+        nodesToInsert.push(itemRule);
+      }
+
+      let anchor = rule;
+      for (const node of nodesToInsert) {
+        anchor.after(node);
+        anchor = node;
+      }
+    }
+  };
+}
+
+legacyGridFallbackPlugin.postcss = true;
+
 const BUNDLED_CSS_FILE = "bundle.css";
 
 async function buildCSS() {
@@ -467,8 +698,13 @@ async function buildCSS() {
     /@import\s+(?:url\(\s*["']?(\.{0,2}\/[^"')]+)["']?\s*\)|["'](\.{0,2}\/[^"']+)["'])\s*[^;]*;/gi;
 
   const baseCssPath = path.join(cssDir, "base.css");
-  for (const file of finalOrder) {
-    const raw = await readFile(path.join(cssDir, file), "utf8");
+  const allCssTexts = await Promise.all(
+    finalOrder.map((file) => readFile(path.join(cssDir, file), "utf8"))
+  );
+  const rootVarMap = buildRootVariableMap(allCssTexts);
+  for (let fileIndex = 0; fileIndex < finalOrder.length; fileIndex += 1) {
+    const file = finalOrder[fileIndex];
+    const raw = allCssTexts[fileIndex];
 
     for (const match of raw.matchAll(remoteImportPattern)) {
       const url = match[1] || match[2];
@@ -491,8 +727,10 @@ async function buildCSS() {
           grid: "autoplace"
         }),
         legacyDeclarationFallbackPlugin(seenSupportsRootBlocks),
+        legacyCssVariablesPlugin(rootVarMap),
         unsupportedSelectorFallbackPlugin(),
         flexGapFallbackPlugin(),
+        legacyGridFallbackPlugin(rootVarMap),
         cssnano()
       ]).process(`/* ${file} */\n${body}`, {
         from: path.join(cssDir, file),
@@ -539,6 +777,52 @@ async function copyOptionalRootFile(fileName, { fallback = null, defaultContents
   return "generated-default";
 }
 
+let swcModule = null;
+async function getSwc() {
+  if (!swcModule) {
+    if (!process.env.SWC_NATIVE_BINDING_CACHE) {
+      const swcCacheDir = path.join(rootDir, ".cache", "swc");
+      await mkdir(swcCacheDir, { recursive: true });
+      process.env.SWC_NATIVE_BINDING_CACHE = swcCacheDir;
+    }
+    const imported = await import("@swc/core");
+    swcModule = imported.default || imported;
+  }
+  return swcModule;
+}
+
+async function buildCompatScript(esbuildOptions) {
+  const { outfile, minify, ...rest } = esbuildOptions;
+  const result = await build({
+    ...rest,
+    target: ["es2020"],
+    minify: false,
+    write: false
+  });
+  const outputFile = result.outputFiles?.[0];
+  if (!outputFile) {
+    throw new Error(`esbuild produced no output for ${outfile}`);
+  }
+  const swc = await getSwc();
+  const transformed = await swc.transform(outputFile.text, {
+    filename: path.basename(outfile),
+    jsc: {
+      parser: {
+        syntax: "ecmascript"
+      },
+      target: "es5"
+    },
+    minify: Boolean(minify),
+    sourceMaps: Boolean(esbuildOptions.sourcemap)
+  });
+  await mkdir(path.dirname(outfile), { recursive: true });
+  await writeFile(outfile, transformed.code, "utf8");
+  if (transformed.map && esbuildOptions.sourcemap) {
+    await writeFile(`${outfile}.map`, transformed.map, "utf8");
+  }
+  return result;
+}
+
 async function buildCoreJsBundle() {
   console.log("building core-js bundle...");
   const { list: requiredModules } = coreJsCompat({
@@ -548,11 +832,12 @@ async function buildCoreJsBundle() {
   if (requiredModules.length === 0) {
     throw new Error("Core-js compatibility query returned no required modules.");
   }
-  await build({
+  await buildCompatScript({
     stdin: {
-      contents: requiredModules
-        .map((moduleName) => `import "core-js/modules/${moduleName}.js";`)
-        .join("\n"),
+      contents: [
+        'import "regenerator-runtime/runtime.js";',
+        ...requiredModules.map((moduleName) => `import "core-js/modules/${moduleName}.js";`)
+      ].join("\n"),
       resolveDir: rootDir,
       sourcefile: "core-js-entry.js"
     },
@@ -560,13 +845,12 @@ async function buildCoreJsBundle() {
     bundle: true,
     format: "iife",
     minify: !debugBundle,
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     legalComments: "none"
   });
 }
 
 async function buildAssSubtitleLibrary() {
-  await build({
+  await buildCompatScript({
     stdin: {
       contents: await assSubtitleRuntimeSource(rootDir),
       resolveDir: rootDir,
@@ -576,7 +860,6 @@ async function buildAssSubtitleLibrary() {
     format: "iife",
     outfile: path.join(distDir, "assets", "libs", "ass.min.js"),
     minify: !debugBundle,
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     legalComments: "none"
   });
 }
@@ -589,23 +872,21 @@ async function buildPluginRuntimeAssets() {
     path.join(rootDir, "node_modules", "crypto-js", "crypto-js.js"),
     "utf8"
   );
-  await build({
+  await buildCompatScript({
     entryPoints: [
       path.join(rootDir, "node_modules", "quickjs-emscripten", "dist", "index.global.js")
     ],
     outfile: path.join(distDir, "assets", "libs", "quickjs-emscripten.global.js"),
     bundle: false,
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     minify: !debugBundle,
     legalComments: "none"
   });
-  await build({
+  await buildCompatScript({
     entryPoints: [path.join(rootDir, "js", "core", "player", "pluginWorker.js")],
     outfile: path.join(distDir, "assets", "runtime", "plugin-worker.js"),
     bundle: true,
     platform: "browser",
     format: "iife",
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     minify: !debugBundle,
     legalComments: "none",
     define: {
@@ -736,13 +1017,12 @@ async function assertSameAsEmbeddedQuickJsWasm(expected) {
 async function buildSubtitleAutoSyncWorker() {
   console.log("building subtitle AutoSync worker...");
   await mkdir(path.join(distDir, "assets", "runtime"), { recursive: true });
-  await build({
+  await buildCompatScript({
     entryPoints: [path.join(rootDir, "js", "core", "player", "subtitleAutoSyncWorker.js")],
     outfile: path.join(distDir, "assets", "runtime", "subtitle-autosync-worker.js"),
     bundle: true,
     platform: "browser",
     format: "iife",
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     minify: !debugBundle,
     legalComments: "none"
   });
@@ -752,14 +1032,13 @@ async function buildBundle() {
   const { version } = await readAppMetadata();
 
   console.log("starting bundle build...");
-  const result = await build({
+  const result = await buildCompatScript({
     entryPoints: [path.join(rootDir, "js/app.js")],
     outfile: path.join(distDir, "app.bundle.js"),
     bundle: true,
     minify: !debugBundle,
     format: "iife",
     sourcemap: debugBundle,
-    target: [`chrome${compatibilityPolicy.chromiumVersion}`],
     metafile: true,
     define: {
       "process.env.NODE_ENV": '"production"',

@@ -184,11 +184,15 @@ export function createPlayerScreenMethods11() {
         return;
       }
       const targetUrl = String(probeUrl || "").trim();
-      if (!targetUrl || this.isCurrentSourceAdaptiveManifest() || !this.isCurrentSourceLikelyMkv(targetUrl, streamCandidate)) {
+      if (
+        !targetUrl ||
+        this.isCurrentSourceAdaptiveManifest() ||
+        (!this.isCurrentSourceLikelyMkv(targetUrl, streamCandidate) && !this.isEmbeddedTrackDiscoverySupported(targetUrl))
+      ) {
         return;
       }
       // Warm the shared cache before AVPlay publishes its track list. The
-      // startup audio gate then sees the languages while it is still closed.
+      // startup audio gate and subtitle list then see the container languages immediately.
       void localMediaTracksRepository.getTracks(targetUrl, { filename: this.getCurrentStreamFilenameHint() }).catch(() => []);
     },
     shouldUseEmbeddedSubtitleTracks() {

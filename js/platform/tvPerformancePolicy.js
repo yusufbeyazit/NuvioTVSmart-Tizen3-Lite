@@ -16,10 +16,23 @@ export const HOME_TV_PERFORMANCE_POLICY = Object.freeze({
   // main-thread work on a 2019 Tizen set. Constrained sets show the catalog
   // data at once and enrich only the card the user rests on.
   constrainedHeroEnrichDwellMs: 500,
+  ultraConstrainedHeroEnrichDwellMs: 650,
   modernArtworkCacheEntries: 640,
   legacyArtworkCacheEntries: 320,
-  lowMemoryArtworkCacheEntries: 200
+  lowMemoryArtworkCacheEntries: 200,
+  ultraConstrainedArtworkCacheEntries: 180,
+  ultraConstrainedArtworkEvictMarginPx: 1000
 });
+
+export function isUltraConstrainedTvProfile(profile = null) {
+  if (!profile?.isTvRuntime) {
+    return false;
+  }
+  const byChromium =
+    Number(profile.chromiumMajorVersion) > 0 && Number(profile.chromiumMajorVersion) < 56;
+  const byYear = Number(profile.tvYear) > 0 && Number(profile.tvYear) <= 2017;
+  return Boolean(byChromium || byYear);
+}
 
 export function isModernTvProfile(profile = null) {
   return Boolean(
@@ -56,6 +69,9 @@ export function getArtworkEvictIdleMs(profile = null, deviceMemory = 0) {
 }
 
 export function getArtworkEvictMarginPx(profile = null, deviceMemory = 0) {
+  if (isUltraConstrainedTvProfile(profile)) {
+    return HOME_TV_PERFORMANCE_POLICY.ultraConstrainedArtworkEvictMarginPx;
+  }
   if (isLowMemoryDevice(deviceMemory)) {
     return HOME_TV_PERFORMANCE_POLICY.legacyArtworkEvictMarginPx;
   }
@@ -65,12 +81,18 @@ export function getArtworkEvictMarginPx(profile = null, deviceMemory = 0) {
 }
 
 export function getTrailerCleanupDelayMs(profile = null) {
+  if (isUltraConstrainedTvProfile(profile)) {
+    return 0;
+  }
   return isModernTvProfile(profile)
     ? HOME_TV_PERFORMANCE_POLICY.modernTrailerCleanupDelayMs
     : HOME_TV_PERFORMANCE_POLICY.legacyTrailerCleanupDelayMs;
 }
 
 export function getHeroEnrichDwellMs(profile = null) {
+  if (isUltraConstrainedTvProfile(profile)) {
+    return HOME_TV_PERFORMANCE_POLICY.ultraConstrainedHeroEnrichDwellMs;
+  }
   return profile?.isPerformanceConstrained
     ? HOME_TV_PERFORMANCE_POLICY.constrainedHeroEnrichDwellMs
     : 0;
@@ -81,6 +103,9 @@ export function getTrailerMountGraceMs(profile = null) {
 }
 
 export function getArtworkCacheLimit(profile = null, deviceMemory = 0) {
+  if (isUltraConstrainedTvProfile(profile)) {
+    return HOME_TV_PERFORMANCE_POLICY.ultraConstrainedArtworkCacheEntries;
+  }
   if (isLowMemoryDevice(deviceMemory)) {
     return HOME_TV_PERFORMANCE_POLICY.lowMemoryArtworkCacheEntries;
   }

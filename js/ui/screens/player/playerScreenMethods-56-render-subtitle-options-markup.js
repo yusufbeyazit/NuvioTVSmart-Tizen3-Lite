@@ -107,6 +107,10 @@ export function createPlayerScreenMethods56() {
       rail.scrollTop = Math.max(0, Number(state.scrollTop || 0));
     },
     scheduleSubtitleOptionVirtualMeasurement() {
+      if (globalThis.__NUVIO_LITE_MODE__ === true) {
+        // Avoid forced synchronous layout + double innerHTML rebuild on Tizen 3.0.
+        return;
+      }
       if (this.subtitleOptionVirtualMeasureTimer) {
         clearTimeout(this.subtitleOptionVirtualMeasureTimer);
         this.subtitleOptionVirtualMeasureTimer = null;
@@ -216,20 +220,34 @@ export function createPlayerScreenMethods56() {
         return false;
       }
 
-      dialog.querySelectorAll(".focused").forEach((node) => node.classList.remove("focused"));
+      const isLite = globalThis.__NUVIO_LITE_MODE__ === true;
+      if (isLite && this._lastSubtitleFocusedNode && this._lastSubtitleFocusedNode.isConnected) {
+        this._lastSubtitleFocusedNode.classList.remove("focused");
+        if (this._lastSubtitleFocusedStepNode && this._lastSubtitleFocusedStepNode.isConnected) {
+          this._lastSubtitleFocusedStepNode.classList.remove("focused");
+        }
+      } else {
+        dialog.querySelectorAll(".focused").forEach((node) => node.classList.remove("focused"));
+      }
       target.classList.add("focused");
+      this._lastSubtitleFocusedNode = target;
+      this._lastSubtitleFocusedStepNode = null;
       if (railName === "style") {
         const side = this.subtitleStyleControlSide === "plus" ? "plus" : "minus";
-        target.querySelector(`.player-dialog-step-${side}`)?.classList.add("focused");
+        const stepNode = target.querySelector(`.player-dialog-step-${side}`);
+        if (stepNode) {
+          stepNode.classList.add("focused");
+          this._lastSubtitleFocusedStepNode = stepNode;
+        }
       }
       if (scroll) {
         this.scrollSubtitleRailNodeIntoView(target);
-        // Tizen 5 can expose stale scrollHeight/clientHeight for one layout
-        // tick after the in-place focus class update. The full dialog render
-        // already had an asynchronous retry; keep that retry for the lighter
-        // in-place navigation path as well so a focused language cannot remain
-        // outside the visible rail.
-        this.scheduleSubtitleDialogScrollIntoView();
+        if (!isLite) {
+          // Tizen 5 can expose stale scrollHeight/clientHeight for one layout
+          // tick after the in-place focus class update. Skip the duplicate reflow
+          // pass on Tizen 3.0 Lite where offsetTop scrolling is already immediate.
+          this.scheduleSubtitleDialogScrollIntoView();
+        }
       }
       return true;
     },

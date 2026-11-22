@@ -71,12 +71,25 @@ export async function fetchRange(
     const validStatus =
       response.status === 206 || (response.status === 200 && start === 0 && !partialOnly);
     // A 206 already answers the requested range; a Content-Range, when sent, must match it.
-    if (
-      !validStatus ||
-      (range && !new RegExp(`^bytes ${start}-\\d+/\\d+$`, "i").test(range)) ||
-      !response.body?.getReader
-    ) {
+    if (!validStatus || (range && !new RegExp(`^bytes ${start}-\\d+/\\d+$`, "i").test(range))) {
       return null;
+    }
+    if (!response.body?.getReader) {
+      // Chromium < 52 (Tizen 3.0 / Chromium 47) has no ReadableStream body.
+      // For a validated 206 partial response (or bounded 200), arrayBuffer()
+      // reads the exact ranged bytes cleanly.
+      if (typeof response.arrayBuffer !== "function") {
+        return null;
+      }
+      const buffer = await response.arrayBuffer();
+      if (probe?.expired || !buffer) {
+        return null;
+      }
+      const view = new Uint8Array(buffer);
+      if (view.length > length) {
+        return partialOnly ? null : view.subarray(0, length);
+      }
+      return view;
     }
     reader = response.body.getReader();
     probe?.readers.add(reader);

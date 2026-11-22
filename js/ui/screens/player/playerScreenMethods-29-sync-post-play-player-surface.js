@@ -429,7 +429,7 @@ export function createPlayerScreenMethods29() {
       // that stream was live.
     },
     isSeekBarAvailable() {
-      return !this.isLivePlayback() && (!this.loadingVisible || this.hasPresentedPlaybackFrame || this.seekLoading);
+      return !this.loadingVisible || this.hasPresentedPlaybackFrame || this.seekLoading;
     },
     isSeekOverlaySuppressingControls() {
       return Date.now() < Number(this.seekOverlaySuppressControlsUntil || 0);

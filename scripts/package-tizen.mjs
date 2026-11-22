@@ -194,7 +194,7 @@ ${pluginServiceBridge}  <link rel="stylesheet" href="css/bundle.css" />
 `;
 }
 
-function buildMainJs({ packageId, includeEngineFsService, includePluginService }) {
+function buildMainJs({ packageId, includeEngineFsService, includePluginService, liteMode = false }) {
   const engineFsServiceId = `${packageId}.EngineFsService`;
   const pluginServiceId = `${packageId}.PluginService`;
   const configuredServiceId = includeEngineFsService ? engineFsServiceId : "";
@@ -206,6 +206,7 @@ function buildMainJs({ packageId, includeEngineFsService, includePluginService }
     requiredLabel: `Samsung Tizen ${compatibilityPolicy.tizenRequiredVersion}+ · Chromium ${compatibilityPolicy.chromiumVersion}+ (${compatibilityPolicy.tizenSupportYear}+)`
   });
   return `window.__NUVIO_PLATFORM__ = "tizen";
+window.__NUVIO_LITE_MODE__ = ${Boolean(liteMode)};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};
@@ -340,6 +341,7 @@ async function stagePackage({
   envSourcePath,
   includeEngineFsService,
   includePluginService,
+  liteMode = false,
   serviceMetadataXml
 }) {
   await rm(stagingDir, { recursive: true, force: true });
@@ -376,7 +378,8 @@ async function stagePackage({
       buildMainJs({
         packageId,
         includeEngineFsService,
-        includePluginService
+        includePluginService,
+        liteMode
       }),
       "utf8"
     )
@@ -384,6 +387,15 @@ async function stagePackage({
   await pruneCssFileForPlatform(path.join(stagingDir, "css", "bundle.css"), "tizen");
   // webOS-only library; nothing in the Tizen package references it.
   await rm(path.join(stagingDir, "assets", "libs", "webOSTV.js"), { force: true });
+  if (liteMode) {
+    // Strip heavy WASM / QuickJS / plugin payloads unused on Tizen 3.0 Lite.
+    await Promise.all([
+      rm(path.join(stagingDir, "assets", "libs", "quickjs-mvp.wasm"), { force: true }),
+      rm(path.join(stagingDir, "assets", "libs", "quickjs-emscripten.global.js"), { force: true }),
+      rm(path.join(stagingDir, "assets", "libs", "libbitsub_bg.wasm"), { force: true }),
+      rm(path.join(stagingDir, "assets", "runtime", "plugin-worker.js"), { force: true })
+    ]);
+  }
   if (includeEngineFsService) {
     await stageTizenEngineFsService();
   }
@@ -464,6 +476,10 @@ function parseArgs(argv) {
       options.includePluginService = true;
     } else if (arg === "--no-plugin-service") {
       options.includePluginService = false;
+    } else if (arg === "--tizen3") {
+      options.includeEngineFsService = false;
+      options.includePluginService = false;
+      options.liteMode = true;
     } else if (arg === "--sign-profile") {
       options.signingProfile = argv[index + 1] || "";
       index += 1;

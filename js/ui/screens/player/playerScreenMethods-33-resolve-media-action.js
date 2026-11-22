@@ -88,6 +88,10 @@ export function createPlayerScreenMethods33() {
       }
 
       if (action === "fastForward") {
+        if (this.isLivePlayback()) {
+          this.seekLiveForward(5);
+          return;
+        }
         this.beginSeekPreview(1, Boolean(event?.repeat));
         return;
       }

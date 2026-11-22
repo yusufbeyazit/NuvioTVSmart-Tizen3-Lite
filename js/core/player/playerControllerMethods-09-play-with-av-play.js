@@ -54,9 +54,10 @@ export function createPlayerControllerMethods09() {
             if (!this.avplayBufferingStartedAt) {
               this.avplayBufferingStartedAt = Date.now();
             }
-            this.avplayBufferingProgress = null;
+            this.avplayBufferingProgress = 0;
             this.avplayReady = false;
             this.emitVideoEvent("waiting", { playbackEngine: this.playbackEngine });
+            this.emitVideoEvent("progress", { playbackEngine: this.playbackEngine, bufferingProgress: 0 });
           },
           onbufferingprogress: (percent) => {
             if (!this.isPlaybackRequestActive(playToken, url)) {
@@ -65,6 +66,10 @@ export function createPlayerControllerMethods09() {
             const numericPercent = Number(percent);
             if (Number.isFinite(numericPercent)) {
               this.avplayBufferingProgress = Math.max(0, Math.min(100, numericPercent));
+              this.emitVideoEvent("progress", {
+                playbackEngine: this.playbackEngine,
+                bufferingProgress: this.avplayBufferingProgress
+              });
             }
             // Fired per percent; getState() is a bridge call, so build the
             // log object only when AVPlay diagnostics are on (issue #1208).
@@ -84,6 +89,7 @@ export function createPlayerControllerMethods09() {
               this.avplayLastBufferingDurationMs = Math.max(0, Date.now() - this.avplayBufferingStartedAt);
             }
             this.avplayBufferingStartedAt = 0;
+            this.avplayBufferingProgress = 100;
             if (this.avplaySeekInFlight) {
               return;
             }
@@ -91,6 +97,7 @@ export function createPlayerControllerMethods09() {
             this.reapplyAvPlayPlaybackRate();
             this.retryPendingAvPlayStartupAudioTrackSelection();
             this.applyAvPlayExternalSubtitleDelay();
+            this.emitVideoEvent("progress", { playbackEngine: this.playbackEngine, bufferingProgress: 100 });
             this.emitVideoEvent("canplay", { playbackEngine: this.playbackEngine });
           },
           oncurrentplaytime: (currentTimeMs) => {
@@ -106,6 +113,13 @@ export function createPlayerControllerMethods09() {
             }
             this.retryPendingAvPlayStartupAudioTrackSelection();
             this.applyAvPlayExternalSubtitleDelay();
+            if (globalThis.__NUVIO_LITE_MODE__ === true) {
+              const now = Date.now();
+              if (now - Number(this.avplayLastTimeUpdateEmitAt || 0) < 450) {
+                return;
+              }
+              this.avplayLastTimeUpdateEmitAt = now;
+            }
             this.emitVideoEvent("timeupdate", { playbackEngine: this.playbackEngine });
           },
           onstreamcompleted: () => {
@@ -288,6 +302,71 @@ export function createPlayerControllerMethods09() {
         this.lastKnownDurationSeconds = durationSeconds;
       }
       return Math.max(0, Number(this.lastKnownDurationSeconds || 0));
+    },
+    getLiveBufferMetrics() {
+      const result = {
+        bufferingPercent: null,
+        bufferedAheadSeconds: null,
+        positionRatio: null,
+        bufferedRatio: null,
+        isBuffering: false
+      };
+      if (this.isUsingAvPlay()) {
+        const pct = Number(this.avplayBufferingProgress);
+        const isBuffering = Boolean(this.avplayBufferingStartedAt > 0 || (Number.isFinite(pct) && pct >= 0 && pct < 100));
+        result.isBuffering = isBuffering;
+        if (Number.isFinite(pct) && pct >= 0) {
+          result.bufferingPercent = Math.max(0, Math.min(100, Math.round(pct)));
+        }
+        try {
+          const avplay = this.getAvPlay();
+          const rawLiveDuration =
+            avplay && this.avplayReady && !this.avplaySeekInFlight
+              ? String(avplay.getStreamingProperty?.("GET_LIVE_DURATION") || "")
+              : "";
+          const parts = rawLiveDuration.split("|");
+          if (parts.length === 2) {
+            const startMs = Number(parts[0]);
+            const endMs = Number(parts[1]);
+            const currentMs = Number(this.avplayCurrentTimeMs || 0);
+            if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+              const windowMs = endMs - startMs;
+              const clampedCurrent = Math.max(startMs, Math.min(endMs, currentMs));
+              result.bufferedAheadSeconds = Math.max(0, (endMs - clampedCurrent) / 1000);
+              result.positionRatio = Math.max(0, Math.min(1, (clampedCurrent - startMs) / windowMs));
+              result.bufferedRatio = 1;
+            }
+          }
+        } catch (_) {
+          // GET_LIVE_DURATION is optional for raw MPEG-TS live streams.
+        }
+        return result;
+      }
+
+      try {
+        const video = this.video;
+        const ranges = video?.buffered;
+        const current = Number(video?.currentTime || 0);
+        if (ranges && ranges.length > 0 && Number.isFinite(current)) {
+          const start = Number(ranges.start(0));
+          let end = Number(ranges.end(ranges.length - 1));
+          for (let i = 0; i < ranges.length; i += 1) {
+            const s = Number(ranges.start(i));
+            const e = Number(ranges.end(i));
+            if (s <= current + 0.5 && e >= current) {
+              end = e;
+              break;
+            }
+          }
+          if (Number.isFinite(end) && end >= current) {
+            result.bufferedAheadSeconds = Math.max(0, end - current);
+            const span = Math.max(1, end - Math.min(start, current));
+            result.positionRatio = Math.max(0, Math.min(1, (current - Math.min(start, current)) / span));
+            result.bufferedRatio = 1;
+          }
+        }
+      } catch (_) {}
+      return result;
     },
     getBufferedTimeSeconds() {
       // AVPlay reports buffering-operation progress, not a buffered media

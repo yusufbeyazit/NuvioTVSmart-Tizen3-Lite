@@ -1,4 +1,5 @@
 import { Platform } from "../../platform/index.js";
+import { TizenCapabilities } from "../../platform/tizen/tizenCapabilities.js";
 import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.js";
 import { withRequestTimeout } from "../../core/network/requestTimeout.js";
 import { fetchMatroskaTracks } from "./matroskaTrackMetadata.js";
@@ -270,6 +271,19 @@ export const localMediaTracksRepository = {
       }
 
       if (Platform.isTizen()) {
+        // On Tizen 3.x / Lite packages without a packaged EngineFS service,
+        // skip the 2s service probe and resolve directly from the container header.
+        const skipLocalService =
+          globalThis.__NUVIO_LITE_MODE__ === true ||
+          globalThis.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ === false;
+        if (skipLocalService) {
+          const headerTracks = await fetchMatroskaTracks(targetUrl);
+          tracksCache.set(targetUrl, {
+            tracks: headerTracks,
+            expiresAt: Date.now() + (headerTracks.length ? TRACK_CACHE_TTL_MS : 5000)
+          });
+          return headerTracks;
+        }
         // The packaged service may take far longer than playback startup to
         // answer, so read the container header at the same time instead of
         // serializing the two sources.

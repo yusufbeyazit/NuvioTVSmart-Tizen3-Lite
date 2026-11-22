@@ -132,7 +132,8 @@ export function getTizenCapabilities(runtime = globalThis) {
     webServiceCapability.known && webServiceCapability.value != null
       ? normalizeBooleanCapability(webServiceCapability.value)
       : null;
-  const engineFsServicePackaged = runtime?.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ !== false;
+  const isLiteMode = runtime?.__NUVIO_LITE_MODE__ === true;
+  const engineFsServicePackaged = !isLiteMode && runtime?.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ !== false;
   // Samsung exposes web.service as an optional capability. Some supported
   // TVs/firmwares report false even though the packaged service can still be
   // started through wrt:service. Callers with an explicit local-service
@@ -140,22 +141,24 @@ export function getTizenCapabilities(runtime = globalThis) {
   // real probe decide; generic callers keep the capability gate. Version and
   // package gates stay authoritative so Tizen 4 and service-less packages
   // remain unsupported.
-  const supportsWebService = isTizen && engineFsServicePackaged && webServiceSupported !== false;
+  const supportsWebService = !isLiteMode && isTizen && engineFsServicePackaged && webServiceSupported !== false;
   const p2pVersionSupported =
+    !isLiteMode &&
     isTizen &&
     supportsP2pByVersion({
       tizenMajorVersion: tizenVersion.major,
       chromiumMajorVersion
     });
-  const supportsP2p = isTizen && engineFsServicePackaged && p2pVersionSupported;
+  const supportsP2p = !isLiteMode && isTizen && engineFsServicePackaged && p2pVersionSupported;
   // The Tizen plugin runtime is intentionally disabled on older firmware.
   // Keep this independent from EngineFS: P2P/media proxy support remains
   // available on Tizen 5.0 even though executable plugins are not.
   const tizenPluginVersionSupported =
-    !isTizen ||
-    tizenVersion.major > TIZEN_PLUGIN_MIN_VERSION[0] ||
-    (tizenVersion.major === TIZEN_PLUGIN_MIN_VERSION[0] &&
-      parseMinorVersion(tizenVersion.version) >= TIZEN_PLUGIN_MIN_VERSION[1]);
+    !isLiteMode &&
+    (!isTizen ||
+      tizenVersion.major > TIZEN_PLUGIN_MIN_VERSION[0] ||
+      (tizenVersion.major === TIZEN_PLUGIN_MIN_VERSION[0] &&
+        parseMinorVersion(tizenVersion.version) >= TIZEN_PLUGIN_MIN_VERSION[1]));
 
   const capabilities = Object.freeze({
     isTizen,

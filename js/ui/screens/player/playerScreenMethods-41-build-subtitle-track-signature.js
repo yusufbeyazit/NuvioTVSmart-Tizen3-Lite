@@ -62,10 +62,21 @@ export function createPlayerScreenMethods41() {
       // shifts and the wrong local metadata would supply the language.
       const embeddedTrackByTextOrdinal =
         Number.isInteger(avplayTextTrackNumber) && avplayTextTrackNumber >= 0
-          ? this.getEmbeddedSubtitleTrackByEmbeddedIndex(avplayTextTrackNumber)
+          ? this.getEmbeddedSubtitleTrackByEmbeddedIndex(avplayTextTrackNumber) ||
+            (avplayTextTrackNumber > 0 && !this.getEmbeddedSubtitleTrackByEmbeddedIndex(0)
+              ? this.getEmbeddedSubtitleTrackByEmbeddedIndex(avplayTextTrackNumber - 1)
+              : null)
           : null;
       const targetIndex = Number(fallbackIndex);
-      return embeddedTrackByTextOrdinal || this.getEmbeddedSubtitleTrackByNativeIndex(Number.isFinite(targetIndex) ? targetIndex : -1);
+      return (
+        embeddedTrackByTextOrdinal ||
+        this.getEmbeddedSubtitleTrackByNativeIndex(Number.isFinite(targetIndex) ? targetIndex : -1) ||
+        (Number.isInteger(avplayTextTrackNumber) &&
+        avplayTextTrackNumber > 0 &&
+        Array.isArray(this.embeddedSubtitleTracks)
+          ? this.embeddedSubtitleTracks[avplayTextTrackNumber - 1] || null
+          : null)
+      );
     },
     mergeAvPlaySubtitleTrackMetadata(track, index) {
       const avplayTrackIndex = Number(track?.avplayTrackIndex);

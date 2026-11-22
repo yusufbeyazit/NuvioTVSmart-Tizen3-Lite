@@ -27,6 +27,17 @@ export function createPlayerControllerMethods12() {
 
       if (this.isLikelyHlsMimeType(normalizedSourceType)) {
         const candidates = [];
+        const preferHardwareAvPlayForHls =
+          isTizenRuntime &&
+          canUseAvPlay &&
+          (globalThis.__NUVIO_LITE_MODE__ === true ||
+            (typeof navigator !== "undefined" &&
+              /(?:Chrome|Chromium)\/([1-4]\d|5[0-5])\b/i.test(String(navigator.userAgent || ""))));
+        if (preferHardwareAvPlayForHls) {
+          // On Tizen 3.x / Lite hardware, AVPlay decodes HLS natively on the VPU
+          // without JS demuxing stalls or low-bitrate ABR pixelation.
+          pushCandidate(candidates, avplayEngine);
+        }
         if (isTizenRuntime && canUseHlsJs) {
           // Match Android's single HLS media pipeline when MSE is available.
           // This also avoids the long AVPlay connection-failure path observed

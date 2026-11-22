@@ -54,16 +54,31 @@ function parseTrackEntries(bytes, element) {
         const field = find(id);
         if (!field) return null;
         if (field.end - field.start > 6) throw new Error("Oversized track integer");
-        return bytes.slice(field.start, field.end).reduce((value, byte) => value * 256 + byte, 0);
+        let value = 0;
+        for (let idx = field.start; idx < field.end; idx += 1) {
+          value = value * 256 + bytes[idx];
+        }
+        return value;
       };
       const string = (id) => {
         const field = find(id);
         if (!field) return "";
         if (field.end - field.start > 1024) throw new Error("Oversized track string");
-        return new TextDecoder("utf-8", { fatal: true })
-          .decode(bytes.subarray(field.start, field.end))
-          .replace(/\0+$/, "")
-          .trim();
+        const slice = bytes.subarray(field.start, field.end);
+        let decoded = "";
+        if (typeof TextDecoder === "function") {
+          decoded = new TextDecoder("utf-8", { fatal: true }).decode(slice);
+        } else {
+          for (let idx = 0; idx < slice.length; idx += 1) {
+            decoded += String.fromCharCode(slice[idx]);
+          }
+          try {
+            decoded = decodeURIComponent(escape(decoded));
+          } catch (_) {
+            // Keep ASCII fallback if UTF-8 decoding fails.
+          }
+        }
+        return decoded.replace(/\0+$/, "").trim();
       };
       const id = integer(0xd7);
       const type = integer(0x83);

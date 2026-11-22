@@ -1,3 +1,4 @@
+import "./platform/legacyDomPolyfills.js";
 import "./ui/components/serverWatchedNotice.js";
 import { MediaServerSyncService } from "./core/profile/mediaServerSyncService.js";
 import { installCustomPosterFallback } from "./core/poster/customPoster.js";
@@ -104,7 +105,16 @@ function loadRemoteStylesheet(href) {
 }
 
 const materialIconsStylesheetLoaded = loadRemoteStylesheet(REMOTE_FONT_STYLESHEETS.icons);
-void loadRemoteStylesheet(REMOTE_FONT_STYLESHEETS.text);
+// Skip heavy remote text webfonts on Tizen 3.x / Chromium < 56 so first paint
+// and scrolling stay fast on 2017 hardware using the system sans-serif stack.
+const _tizenCapsAtBoot = TizenCapabilities.get();
+if (
+  !(_tizenCapsAtBoot.isTizen &&
+    ((_tizenCapsAtBoot.tizenMajorVersion > 0 && _tizenCapsAtBoot.tizenMajorVersion <= 3) ||
+      (_tizenCapsAtBoot.chromiumMajorVersion > 0 && _tizenCapsAtBoot.chromiumMajorVersion < 56)))
+) {
+  void loadRemoteStylesheet(REMOTE_FONT_STYLESHEETS.text);
+}
 
 const GUEST_QR_BYPASS_KEY = "skipAuthQrGate";
 const SIGNED_OUT_ALLOWED_ROUTES = new Set([
@@ -287,6 +297,12 @@ function applyPerformanceMode() {
   document.body.classList.toggle("legacy-webos38", legacyWebOs38);
   document.documentElement.classList.toggle("legacy-tizen", legacyTizen);
   document.body.classList.toggle("legacy-tizen", legacyTizen);
+  const tizen3Optimized =
+    legacyTizen &&
+    ((tvRuntime.chromiumMajorVersion > 0 && tvRuntime.chromiumMajorVersion < 56) ||
+      (tvRuntime.tvYear > 0 && tvRuntime.tvYear <= 2017));
+  document.documentElement.classList.toggle("tizen-3-optimized", tizen3Optimized);
+  document.body.classList.toggle("tizen-3-optimized", tizen3Optimized);
   ["no-flex-gap", "no-css-grid", "no-aspect-ratio", "no-css-math", "no-backdrop-filter"].forEach(
     (className) => {
       document.body.classList.toggle(className, rootClasses.contains(className));
@@ -785,10 +801,13 @@ async function bootstrapApp() {
     // plugin code needs the service.
     markBootStage("PluginService starts on first plugin use");
   }
+  const isLiteMode = globalThis.__NUVIO_LITE_MODE__ === true;
   applyPerformanceMode();
   watchTvFramePace();
   startTvArtworkLazyLoader();
-  installFrameBudgetSampler();
+  if (!isLiteMode) {
+    installFrameBudgetSampler();
+  }
   markBootStage("Loading language resources");
   await I18n.init();
 
@@ -800,12 +819,16 @@ async function bootstrapApp() {
   preloadMaterialIconFont();
   installWebOsImgurImageFallback();
   MediaServerSyncService.start();
-  AmbientMode.start();
+  if (!isLiteMode) {
+    AmbientMode.start();
+  }
   FocusEngine.init();
   setupProviderCredentialForegroundLifecycle();
   setupTizenPlaybackLifecycle();
   setupTizenAppControlLifecycle();
-  setupPluginRuntimeLifecycle();
+  if (!isLiteMode) {
+    setupPluginRuntimeLifecycle();
+  }
   setupWebOsAppLifecycle();
 
   ThemeManager.apply();
@@ -903,7 +926,9 @@ async function bootstrapApp() {
   markBootStage("Checking authentication");
   await AuthManager.bootstrap();
   // Party toasts and the party availability request can wait for Home.
-  runAfterFirstHomePaint(() => installPartyEffects());
+  if (!isLiteMode) {
+    runAfterFirstHomePaint(() => installPartyEffects());
+  }
 }
 
 async function bootstrapAddonRemoteMode() {

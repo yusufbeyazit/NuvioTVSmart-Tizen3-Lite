@@ -202,13 +202,55 @@ export function createPlayerControllerMethods08() {
       } catch (_) {
         // Ignore unsupported AVPlay header properties.
       }
+      try {
+        if (Platform.isTizen()) {
+          const isUhdPanel = Boolean(globalThis.webapis?.productinfo?.isUdPanelSupported?.());
+          if (isUhdPanel) {
+            // Samsung Tizen 3.0 UHD panels require SET_MODE_4K before prepareAsync
+            // to allocate the full UHD hardware decoder pipeline and avoid macroblocking.
+            avplay.setStreamingProperty("SET_MODE_4K", "TRUE");
+          }
+          const urlLower = String(this.avplayUrl || "").toLowerCase();
+          const isAdaptive =
+            urlLower.includes(".m3u8") ||
+            urlLower.includes(".mpd") ||
+            this.isLikelyHlsMimeType?.(this.currentPlaybackMediaSourceType) ||
+            this.isLikelyDashMimeType?.(this.currentPlaybackMediaSourceType);
+          if (isAdaptive) {
+            const maxRes = isUhdPanel ? "3840x2160" : "1920x1080";
+            avplay.setStreamingProperty("ADAPTIVE_INFO", `FIXED_MAX_RESOLUTION=${maxRes}|STARTBITRATE=AVERAGE`);
+          }
+        }
+      } catch (_) {
+        // Ignore on firmware that rejects SET_MODE_4K or ADAPTIVE_INFO.
+      }
     },
     configureAvPlayBuffering() {
       const avplay = this.getAvPlay();
-      if (!avplay || Platform.isTizen()) {
-        // Match Stremio's Tizen AVPlay path: leave buffering thresholds and the
-        // timeout to Samsung's model-specific defaults. Small fixed buffers can
-        // make high-bitrate REMUX playback repeatedly drain and resume.
+      if (!avplay) {
+        return;
+      }
+      if (Platform.isTizen()) {
+        if (globalThis.__NUVIO_LITE_MODE__ !== true) {
+          // Match Stremio's Tizen AVPlay path on Tizen 4+.
+          return;
+        }
+        // Tizen 3.0's default AVPlay prebuffer is very short (~1-2s), which causes
+        // brief frame corruption / macroblocking on network jitter. Give VOD streams
+        // a healthier buffer while keeping live streams responsive.
+        const isLive = Boolean(this.isLivePlaybackItemType?.());
+        const playBufferSec = isLive ? 1 : 5;
+        const resumeBufferSec = isLive ? 2 : 10;
+        const timeoutSec = isLive ? 12 : 25;
+        try {
+          avplay.setBufferingParam?.("PLAYER_BUFFER_FOR_PLAY", "PLAYER_BUFFER_SIZE_IN_SECOND", playBufferSec);
+        } catch (_) {}
+        try {
+          avplay.setBufferingParam?.("PLAYER_BUFFER_FOR_RESUME", "PLAYER_BUFFER_SIZE_IN_SECOND", resumeBufferSec);
+        } catch (_) {}
+        try {
+          avplay.setTimeoutForBuffering?.(timeoutSec);
+        } catch (_) {}
         return;
       }
 

@@ -137,3 +137,52 @@ html:not(.material-icons-ready) .settings-nav-icon-material,
 html:not(.material-icons-ready) .settings-row-leading-icon {
   visibility: hidden;
 }
+
+/* Tizen 3.0 / Chromium 47 (2017 hardware) Lite fluidity optimizations:
+   Disable expensive backdrop filters, heavy shadows, and shorten transitions
+   for snappy D-pad navigation and stutter-free video playback. */
+html.tizen-3-optimized *,
+html.tizen-3-optimized *::before,
+html.tizen-3-optimized *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.tizen-3-optimized .card,
+html.tizen-3-optimized .focusable {
+  transition-duration: 0.06s !important;
+}
+
+html.tizen-3-optimized .player-controls-overlay,
+html.tizen-3-optimized .player-controls-bottom,
+html.tizen-3-optimized .player-controls-top,
+html.tizen-3-optimized .player-progress-fill,
+html.tizen-3-optimized .player-progress-buffered,
+html.tizen-3-optimized .player-subtitle-dialog,
+html.tizen-3-optimized .player-subtitle-dialog *,
+html.tizen-3-optimized .player-dialog-item {
+  transition: none !important;
+  box-shadow: none !important;
+}
+
+html.tizen-3-optimized .player-subtitle-dialog .player-dialog-item.focused {
+  transform: none !important;
+}
+
+/* Live / M3U bottom loading & live buffer indicator bar */
+.player-progress-shell.is-live {
+  display: block;
+}
+
+.player-progress-shell.is-live .player-progress-buffered.is-visible {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.player-progress-shell.is-live .player-progress-fill {
+  background: #e53935;
+}
+
+.player-progress-shell.is-live.is-live-loading .player-progress-fill {
+  background: #ffffff;
+  opacity: 0.9;
+}

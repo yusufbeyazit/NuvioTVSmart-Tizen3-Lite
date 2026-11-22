@@ -2,57 +2,60 @@
 
   <img src="assets/brand/app_logo_wordmark.png" alt="Nuvio" width="300" />
 
+  <h1>NuvioTVSmart — Tizen 3 Lite</h1>
+
   <p>
-    A free, open-source media app for your phone, your desktop, and the TV you already own.
-    <br />
-    Bring your own sources. Nuvio turns them into a library with artwork, ratings, subtitles, and your place saved on every screen.
+    A lightweight, performance-focused fork of <a href="https://github.com/NuvioMedia/NuvioTVSmart">NuvioMedia/NuvioTVSmart</a> adapted for <strong>Samsung Tizen 3.x (2017) TVs</strong> running Chromium 47 (tested on Samsung UE55MU7400).
   </p>
 
-[Website](https://nuvio.tv) · [GitHub releases](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) · [Support Nuvio](https://nuvio.tv/support)
+[Upstream Repository](https://github.com/NuvioMedia/NuvioTVSmart) · [Nuvio Website](https://nuvio.tv)
 
 </div>
 
-## Get Nuvio TV
+## What's Different in Tizen 3 Lite?
 
-Nuvio TV supports **Samsung Tizen TVs from 2018 onward (Tizen 4+)** and **LG webOS TVs from 2020 onward (webOS 5+)**.
-The startup compatibility baseline is Samsung Tizen 4.0 / Chromium 56 and LG webOS 5.0 / Chromium 68 when the platform reports those versions.
+Official Nuvio TV builds target **Samsung Tizen 4+ (Chromium 56+)** and do not run properly on 2017 Tizen 3.0 TVs (Chromium 47). This fork adds full Tizen 3.0 compatibility and Lite optimizations:
 
-Platform capabilities are intentionally version-dependent:
+- **Tizen 3.0 / Chromium 47 Compatibility:**
+  - Compiles all browser bundles (`app.bundle.js`, `core-js.bundle.js`, workers, ASS subtitle runtime) to pure **ES5** (`esbuild` + `@swc/core` + `regenerator-runtime`) with `core-js` polyfills targeting Chrome 47.
+  - Adds lightweight DOM/Web API polyfills ([legacyDomPolyfills.js](./js/platform/legacyDomPolyfills.js)) for APIs missing in Chromium 47 (`URLSearchParams`, `URL.prototype.searchParams`, `NodeList.prototype.forEach`, `Node.prototype.isConnected`, `Element.prototype` helpers).
+  - Resolves CSS custom properties (`var(--...)`) across all stylesheets and generates Flexbox fallbacks for `display: grid` so layouts, sidebars, buttons, and posters render at proper sizes on Chromium 47.
+- **Lite Mode (Fluidity & Stability on 2017 Hardware):**
+  - Removes P2P/Torrenting (`EngineFsService`), `PluginService`, and unused WASM/QuickJS payloads from the `.wgt` package while keeping `subtitle-autosync-worker.js` for subtitle auto-sync.
+  - Disables heavy background tasks in Lite mode (`AmbientMode`, `FrameBudgetSampler`, `PartyEffects`, remote text webfonts) and tightens poster artwork cache/eviction budgets.
+  - Eliminates subtitle picker lag via `O(1)` focus tracking, `offsetTop` scrolling, fast sorting, and removing redundant layout measurements/transitions.
+- **Improved Playback, Subtitles & Live M3U Streams:**
+  - Prioritizes Samsung's hardware **AVPlay** engine for HLS/M3U8 streams on Tizen 3.x instead of software `hls.js` demuxing.
+  - Enables `SET_MODE_4K` on UHD panels (`isUdPanelSupported()`) and sets balanced AVPlay prebuffers (`5s/10s` for VOD, low-latency `1s/2s` for live) to prevent periodic frame corruption/macroblocking.
+  - Adds a Chromium 47 `response.arrayBuffer()` fallback in `rangeProbe.js` so embedded MKV subtitle/audio track languages (`Turkish`, `English`, `Italian`, etc.) resolve instead of showing `Subtitle 1..15`.
+  - Shows a real-time live buffer indicator bar (`Buffer %` / `Buffer Xs`) at the bottom of the player for live / M3U streams and supports **seeking forward toward the live edge** with the remote's Right arrow / Fast-Forward button (`seekLiveForward`).
 
-- **Samsung Tizen 4.x** — the app and direct playback are supported, but torrent/P2P playback is unavailable by design. Some advanced audio and subtitle features may also be limited.
-- **Samsung Tizen 5.x** — torrent/P2P playback is supported through the bundled local EngineFS service. The packaged PluginService, plugin execution and remote plugin synchronization also run on Tizen 5.x, including the Node 4.4.3 service runtime of Tizen 5.5.
-- **Samsung Tizen 6+** — torrent/P2P and the packaged PluginService are supported. Plugin execution requires the packaged service plus the TV runtime's Worker and WebAssembly support. Tizen 6 and later use the same current Tizen service pipeline.
-- **LG webOS 5.x** — torrent/P2P and the packaged plugin service are supported, with the limited plugin resource quotas used by the older webOS runtime.
-- **LG webOS 6+** — torrent/P2P and the packaged plugin service are supported with the modern plugin resource quotas.
+> **Note on Supported Features:** Torrent/P2P playback and local Node.js `PluginService` are intentionally removed in Tizen 3 Lite. Direct HTTP/HTTPS, Debrid, IPTV/M3U, and Media Server (Jellyfin/Plex) playback work via Samsung AVPlay.
 
-On Tizen 5+ and LG webOS, torrent/P2P uses only the bundled local companion service; no external torrent streaming server is configured or required.
+## Build from Source
 
-- [Nuvio TV Installer](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) for Windows, macOS, and Linux
-- [Nuvio TV Installer for iPhone and iPad](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) as an unsigned IPA, also available as an [AltStore/SideStore source](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest/download/NuvioTVSmart-Installer-AltStore.json)
-- [Nuvio TV Installer for Android](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) as an APK for phones and tablets
-- [Samsung Tizen WGT](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) for manual installation
-- [LG webOS Homebrew repository](https://raw.githubusercontent.com/NuvioMedia/NuvioTVWebOS/main/webosbrew/apps.json)
-- [LG webOS IPK](https://github.com/NuvioMedia/NuvioTVSmart/releases/latest) for manual installation
-
-## Build from source
+Requires **Node.js** and **npm**:
 
 ```bash
-git clone https://github.com/NuvioMedia/NuvioTVSmart.git NuvioTVSmart
-cd NuvioTVSmart
+git clone https://github.com/yusufbeyazit/NuvioTVSmart-Tizen3-Lite.git
+cd NuvioTVSmart-Tizen3-Lite
 npm install
-npm run build
+npm run package:tizen3
 ```
 
-Build TV packages with:
+This creates the unsigned Tizen 3 Lite package (`NuvioTV001_<version>.wgt`) in the repository root.
 
-```bash
-npm run package:tizen
-npm run package:tizen:store
-npm run package:webos
-```
+> **Optional (`local.properties`):** To enable official QR sign-in and metadata integrations, create a `local.properties` file based on `local.example.properties` before running `npm run package:tizen3`. Do **not** commit `local.properties` to Git.
 
-`package:tizen` creates the unsigned WGT used by development and the Nuvio TV Installer. The installer signs it locally for the target TV before installation. `package:tizen:store` is a separate Seller Office build: it requires Tizen Studio/Web CLI and a configured security profile, and creates the signed Store package with the local EngineFS service included so Tizen 5+ retains torrent/P2P playback. Tizen 4 still reports P2P as unsupported at runtime. Nuvio TV is built with JavaScript, HTML, CSS, and platform TV APIs. Building requires Node.js and npm; package installation additionally requires the relevant Tizen or webOS tools.
+## Installing on Samsung Tizen 3.x TV
+
+You can install the generated `.wgt` without manually configuring Tizen Studio by using **[Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung)**:
+
+1. On your Samsung TV, open **Apps**, press **`12345`** on the remote, enable **Developer Mode**, enter your PC's local IP address, and restart the TV.
+2. Open **Apps2Samsung** on your PC (on the same Wi-Fi/LAN), select your TV, choose **Custom WGT**, pick the generated `NuvioTV001_<version>.wgt`, and click **Install**.
+
+*(Alternatively, sign and install using Tizen Studio / Tizen CLI.)*
 
 ## License
 
-[GNU General Public License v3.0](./LICENSE)
+This project is a fork of [NuvioMedia/NuvioTVSmart](https://github.com/NuvioMedia/NuvioTVSmart) and remains licensed under the [GNU General Public License v3.0](./LICENSE).

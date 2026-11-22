@@ -297,6 +297,10 @@ export function createPlayerScreenMethods71() {
         }
         if (keyCode === 39) {
           this.autoHideControlsAfterSeek = false;
+          if (this.isLivePlayback()) {
+            this.seekLiveForward(5);
+            return;
+          }
           this.beginSeekPreview(1, Boolean(event?.repeat), true);
           return;
         }
@@ -347,6 +351,10 @@ export function createPlayerScreenMethods71() {
           return;
         }
         if (keyCode === 39) {
+          if (this.isLivePlayback()) {
+            this.seekLiveForward(5);
+            return;
+          }
           this.beginSeekPreview(1, Boolean(event?.repeat), true);
           return;
         }
@@ -384,11 +392,7 @@ export function createPlayerScreenMethods71() {
         return;
       }
       if (keyCode === 38) {
-        if (this.isLivePlayback()) {
-          if (!this.focusSkipIntroButton()) this.setControlsVisible(false);
-        } else {
-          this.focusProgressBar();
-        }
+        this.focusProgressBar();
         return;
       }
       if (keyCode === 40) {
